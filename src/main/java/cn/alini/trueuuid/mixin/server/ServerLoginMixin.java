@@ -25,6 +25,7 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Mixin(targets = "net.minecraft.server.network.ServerLoginPacketListenerImpl")
 public abstract class ServerLoginMixin {
@@ -115,7 +116,7 @@ public abstract class ServerLoginMixin {
             reset();
             return;
         }
-        this.trueuuid$offlineUpgradeOffered = offlineData != null;
+        this.trueuuid$offlineUpgradeOffered = offlineData != null && !TrueuuidConfig.autoMigrateOfflineData();
 
         FriendlyByteBuf buf = new FriendlyByteBuf(Unpooled.buffer());
         buf.writeUtf(this.trueuuid$nonce);
@@ -269,6 +270,9 @@ public abstract class ServerLoginMixin {
 
         // 关键：使用异步 API，不在主线程阻塞 (Key: Use async API, do not block main thread)
         final String hasJoinedUrl = clientHasJoinedUrl;
+        final String loginName = this.gameProfile.getName();
+        final int expectedTransaction = this.trueuuid$txId;
+        final AtomicBoolean verifiedSession = new AtomicBoolean(false);
         try {
             // 立即取消原始调用（以免继续执行原有逻辑），但不要 reset()，保留状态直到回调完成
             // (Immediately cancel the original call (to avoid executing original logic), but do not reset(); keep state until callback completes)
@@ -276,6 +280,7 @@ public abstract class ServerLoginMixin {
 
             SessionCheck.hasJoinedAsync(this.gameProfile.getName(), this.trueuuid$nonce, ip, hasJoinedUrl)
                     .thenCompose(resOpt -> {
+                        verifiedSession.set(resOpt.isPresent());
                         if (resOpt.isPresent() || !hasJoinedUrl.isEmpty() || !trueuuid$isLocalAddress(ip)) {
                             return java.util.concurrent.CompletableFuture.completedFuture(resOpt);
                         }
@@ -287,6 +292,7 @@ public abstract class ServerLoginMixin {
                     .whenComplete((resOpt, throwable) -> {
                         // 始终在主线程处理后续逻辑 (Always process subsequent logic on main thread)
                         server.execute(() -> {
+                            if (this.trueuuid$txId != expectedTransaction || !this.connection.isConnected()) return;
                             try {
                                 if (throwable != null) {
                                     if (TrueuuidConfig.debug()) {
@@ -324,7 +330,7 @@ public abstract class ServerLoginMixin {
                                 }
                                 this.gameProfile = newProfile;
                                 AuthState.markAuthSuccess(this.connection, res.uuid(), res.name(), source, displayName);
-                                if (!trueuuid$handleOfflineUpgradeIfNeeded(res.name(), res.uuid(), source, displayName, finalMigrationConfirmed)) {
+                                if (!trueuuid$handleOfflineUpgradeIfNeeded(loginName, res.name(), res.uuid(), source, displayName, finalMigrationConfirmed, verifiedSession.get(), ip)) {
                                     return;
                                 }
                                 TrueuuidRuntime.NAME_REGISTRY.recordSuccess(res.name(), res.uuid(), ip, source, displayName);
@@ -465,46 +471,40 @@ public abstract class ServerLoginMixin {
     }
 
     @Unique
-    private boolean trueuuid$handleOfflineUpgradeIfNeeded(String name, UUID verifiedUuid, AuthState.AuthSource source, String displayName, boolean confirmed) {
-        if (!PlayerDataMigration.needsOfflineUpgrade(this.server, name, verifiedUuid)) {
-            return true;
+    private boolean trueuuid$handleOfflineUpgradeIfNeeded(String loginName, String verifiedName, UUID verifiedUuid,
+                                                         AuthState.AuthSource source, String displayName,
+                                                         boolean confirmed, boolean verifiedSession, String ip) {
+        if (!PlayerDataMigration.needsOfflineUpgrade(this.server, loginName, verifiedUuid)) return true;
+        PlayerDataMigration.OfflineData data = PlayerDataMigration.findOfflineData(this.server, loginName);
+        if (data == null) return true;
+        if (!verifiedSession || !loginName.equalsIgnoreCase(verifiedName)) {
+            sendDisconnectWithReason(Component.literal("未完成当前账号的真实会话校验，未修改离线玩家数据。请重新登录后重试。"));
+            return false;
         }
-        PlayerDataMigration.OfflineData data = PlayerDataMigration.findOfflineData(this.server, name);
-        if (data == null) {
-            return true;
+        UUID bound = TrueuuidRuntime.NAME_REGISTRY.getPremiumUuid(loginName).orElse(null);
+        if (bound != null && !bound.equals(verifiedUuid)) {
+            sendDisconnectWithReason(Component.literal("该名称已绑定另一认证 UUID，自动继承已停止，两边数据均保留。请联系管理员。"));
+            return false;
         }
-        String sourceName = source == AuthState.AuthSource.YGGDRASIL
-                ? (displayName == null || displayName.isBlank() ? "皮肤站登录" : "皮肤站登录(" + displayName + ")")
-                : "正版验证";
-        if (!confirmed) {
+        // A genuine verified identity remains protected even if migration later needs admin review.
+        TrueuuidRuntime.NAME_REGISTRY.recordSuccess(verifiedName, verifiedUuid, ip, source, displayName);
+        if (!TrueuuidConfig.autoMigrateOfflineData() && !confirmed) {
             sendDisconnectWithReason(Component.literal(
-                    "检测到重复 UUID 玩家数据。\n\n"
-                            + "当前登录方式: " + sourceName + "\n"
-                            + "离线 UUID: " + data.offlineUuid() + "\n"
-                            + "当前 UUID: " + verifiedUuid + "\n\n"
-                            + "当你看到此消息时，说明该名称同时存在正版/皮肤站 UUID 和离线 UUID 数据。\n"
-                            + "如果需要继承离线数据，请联系管理员使用 /trueuuid migrateuuid " + name + "。\n"
-                            + "如果离线数据只是重复旧数据，请使用 /trueuuid cleanupuuid " + name + " 清理。"
-            ));
+                    "检测到新旧 UUID 玩家数据。自动继承已关闭，未修改任何玩家数据。\n"
+                            + "离线 UUID: " + data.offlineUuid() + "\n当前 UUID: " + verifiedUuid + "\n"
+                            + "请确认继承，或联系管理员使用 /trueuuid migrateuuid " + loginName + "。"));
             return false;
         }
         try {
-            PlayerDataMigration.migrateOfflineToVerified(this.server, name, verifiedUuid);
-            if (TrueuuidConfig.debug()) {
-                System.out.println("[TrueUUID] migrated offline data before login: player=" + name
-                        + ", offlineUuid=" + data.offlineUuid() + ", verifiedUuid=" + verifiedUuid);
-            }
+            PlayerDataMigration.migrateOfflineToVerified(this.server, loginName, verifiedUuid);
             return true;
-        } catch (Exception ex) {
-            System.out.println("[TrueUUID] 离线玩家数据继承失败, player=" + name + ", offlineUuid=" + data.offlineUuid()
-                    + ", verifiedUuid=" + verifiedUuid + ", error=" + ex);
+        } catch (Exception failure) {
+            System.out.println("[TrueUUID] 自动继承已停止: player=" + loginName + ", offlineUuid=" + data.offlineUuid()
+                    + ", verifiedUuid=" + verifiedUuid + ", error=" + failure);
             sendDisconnectWithReason(Component.literal(
-                    "离线玩家数据继承失败，已取消进入以避免数据错乱。\n\n"
-                            + "玩家: " + name + "\n"
-                            + "离线 UUID: " + data.offlineUuid() + "\n"
-                            + "当前 UUID: " + verifiedUuid + "\n\n"
-                            + "原因: " + ex.getMessage()
-            ));
+                    "玩家数据继承未完成，已取消进入以保全存档。\n"
+                            + "离线 UUID: " + data.offlineUuid() + "\n当前 UUID: " + verifiedUuid + "\n"
+                            + failure.getMessage() + "\n请联系管理员，保留原档和 trueuuid-backups。"));
             return false;
         }
     }

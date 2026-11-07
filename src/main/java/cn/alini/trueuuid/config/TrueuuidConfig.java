@@ -41,6 +41,7 @@ public final class TrueuuidConfig {
     public static boolean debug() { return COMMON.debug.get(); }
     // 新增 nomojang 开关访问器 (Added nomojang switch accessor)
     public static boolean nomojangEnabled() { return COMMON.nomojangEnabled.get(); }
+    public static boolean autoMigrateOfflineData() { return COMMON.autoMigrateOfflineData.get(); }
 
     // authlib-injector / Yggdrasil 皮肤站支持
     @SuppressWarnings("unchecked")
@@ -69,6 +70,7 @@ public final class TrueuuidConfig {
         public final ForgeConfigSpec.BooleanValue recentIpGraceEnabled;
         public final ForgeConfigSpec.IntValue recentIpGraceTtlSeconds;
         public final ForgeConfigSpec.BooleanValue debug;
+        public final ForgeConfigSpec.BooleanValue autoMigrateOfflineData;
 
         Common(ForgeConfigSpec.Builder b) {
             b.push("auth");
@@ -97,6 +99,8 @@ public final class TrueuuidConfig {
             recentIpGraceTtlSeconds   = b.comment("退出游戏后允许同 IP 容错重连的秒数。默认 10 秒，避免长期误导为皮肤站/正版登录。")
                     .defineInRange("recentIpGrace.ttlSeconds", 10, 1, 60);
             debug = b.comment("启用调试日志输出").define("debug", false);
+            autoMigrateOfflineData = b.comment("真实会话校验成功后自动备份、继承并归档同名离线存档；不覆盖不同的目标进度。")
+                    .define("autoMigrateOfflineData", true);
             // 新增：跳过 Mojang 会话认证（开启后不再通过 sessionserver 验证） (Added: Skip Mojang session auth (no longer verify via sessionserver when enabled))
             nomojangEnabled = b.comment("开启后关闭对 Mojang 会话服务的在线校验逻辑；同 IP 且近期有正版成功的名称按正版 UUID 处理，其余直接按离线进入处理。")
                     .define("nomojang.enabled", false);

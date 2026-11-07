@@ -3,6 +3,7 @@ package cn.alini.trueuuid.command;
 import cn.alini.trueuuid.Trueuuid;
 import cn.alini.trueuuid.config.TrueuuidConfig;
 import cn.alini.trueuuid.server.PlayerDataMigration;
+import cn.alini.trueuuid.server.MigrationTransaction;
 import cn.alini.trueuuid.server.TrueuuidRuntime;
 import com.electronwill.nightconfig.core.file.CommentedFileConfig;
 import com.mojang.brigadier.CommandDispatcher;
@@ -18,6 +19,7 @@ import net.minecraftforge.fml.loading.FMLPaths;
 
 import java.nio.file.Path;
 import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 
 @Mod.EventBusSubscriber(modid = Trueuuid.MODID)
@@ -49,18 +51,16 @@ public class TrueuuidCommands {
                 .then(Commands.literal("migrateuuid")
                         .requires(src -> src.hasPermission(4))
                         .then(Commands.argument("name", StringArgumentType.word())
-                                .executes(ctx -> migrateUuid(ctx.getSource(), StringArgumentType.getString(ctx, "name")))))
+                                .executes(ctx -> migrateUuid(ctx.getSource(), StringArgumentType.getString(ctx, "name"), false))
+                                .then(Commands.literal("overwrite")
+                                        .executes(ctx -> migrateUuid(ctx.getSource(), StringArgumentType.getString(ctx, "name"), true)))))
                 .then(Commands.literal("reload")
                         .executes(ctx -> cmdConfigReload(ctx.getSource()))));
     }
 
     private static int cmdConfigReload(CommandSourceStack src) {
-        try {
-            Path cfgPath = FMLPaths.CONFIGDIR.get().resolve("trueuuid-common.toml");
-            CommentedFileConfig cfg = CommentedFileConfig.builder(cfgPath)
-                    .sync()
-                    .autosave()
-                    .build();
+        Path cfgPath = FMLPaths.CONFIGDIR.get().resolve("trueuuid-common.toml");
+        try (CommentedFileConfig cfg = CommentedFileConfig.builder(cfgPath).sync().build()) {
             cfg.load();
 
             java.util.function.BiFunction<String, String, Object> getVal = (authKey, altKey) -> {
@@ -69,7 +69,14 @@ public class TrueuuidCommands {
                 return null;
             };
 
+            // Reload the legacy literal whitelist before setters can autosave the Forge config.
+            Object whitelist = cfg.get(List.of("auth", "yggdrasil.apiRootWhitelist"));
+            if (whitelist instanceof List<?> values && values.stream().allMatch(String.class::isInstance)) {
+                TrueuuidConfig.COMMON.apiRootWhitelist.set(values.stream().map(String.class::cast).toList());
+            }
             Object v;
+            v = getVal.apply("auth.autoMigrateOfflineData", "autoMigrateOfflineData");
+            if (v instanceof Boolean value) TrueuuidConfig.COMMON.autoMigrateOfflineData.set(value);
             v = getVal.apply("auth.nomojang.enabled", "nomojang.enabled");
             if (v instanceof Boolean value) TrueuuidConfig.COMMON.nomojangEnabled.set(value);
 
@@ -189,11 +196,11 @@ public class TrueuuidCommands {
         }
     }
 
-    private static int migrateUuid(CommandSourceStack src, String name) {
+    private static int migrateUuid(CommandSourceStack src, String name, boolean overwrite) {
         try {
             Optional<UUID> verifiedUuid = TrueuuidRuntime.NAME_REGISTRY.getPremiumUuid(name);
             if (verifiedUuid.isEmpty()) {
-                src.sendFailure(Component.literal("[TrueUUID] 未找到 " + name + " 的正版/皮肤站 UUID 绑定记录。请先让玩家成功完成一次验证登录。"));
+                src.sendFailure(Component.literal("[TrueUUID] 未找到 " + name + " 的正版/皮肤站 UUID 绑定记录。请先让玩家完成一次真实会话验证。"));
                 return 0;
             }
 
@@ -203,13 +210,14 @@ public class TrueuuidCommands {
                 return 0;
             }
 
-            PlayerDataMigration.migrateOfflineToVerified(src.getServer(), name, verifiedUuid.get());
+            MigrationTransaction.Result result = PlayerDataMigration.migrate(src.getServer(), name, verifiedUuid.get(),
+                    overwrite ? MigrationTransaction.Policy.OVERWRITE : MigrationTransaction.Policy.SAFE);
             src.sendSuccess(() -> Component.literal(
                     "[TrueUUID] 已将 " + name + " 的离线 UUID 数据继承到正版/皮肤站 UUID。"
                             + "\n离线 UUID: " + offlineData.offlineUuid()
                             + "\n目标 UUID: " + verifiedUuid.get()
                             + "\n继承数据: " + offlineData.summary()
-                            + "\n已自动备份，备份目录位于存档 trueuuid-backups/offline-upgrades 下。"), false);
+                            + "\n旧文件已归档，备份目录: " + (result == null ? "无待继承数据" : result.backupDir())), false);
             return 1;
         } catch (Exception ex) {
             src.sendFailure(Component.literal("[TrueUUID] 继承离线 UUID 数据失败: " + ex.getMessage()));
