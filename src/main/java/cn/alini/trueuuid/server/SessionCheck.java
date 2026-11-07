@@ -6,9 +6,6 @@ import com.google.gson.annotations.SerializedName;
 
 import java.net.URI;
 import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
@@ -20,7 +17,6 @@ import java.util.concurrent.CompletableFuture;
  * (Server calls hasJoined to verify premium status and get final UUID and skin properties)
  */
 public final class SessionCheck {
-    private static final HttpClient HTTP = HttpClient.newHttpClient();
     private static final Gson GSON = new Gson();
 
     public record Property(String name, String value, String signature) {}
@@ -70,9 +66,7 @@ public final class SessionCheck {
                     + (hasJoinedBaseUrl != null && !hasJoinedBaseUrl.isEmpty() ? " (自定义)" : " (Mojang)"));
         }
 
-        HttpRequest req = HttpRequest.newBuilder(URI.create(url)).GET().build();
-
-        return HTTP.sendAsync(req, HttpResponse.BodyHandlers.ofString())
+        return SessionHttpClient.get(URI.create(url))
                 .thenApply(resp -> {
                     if (cn.alini.trueuuid.config.TrueuuidConfig.debug()) {
                         System.out.println("[TrueUUID][DEBUG] 响应状态码: " + resp.statusCode());
@@ -108,12 +102,6 @@ public final class SessionCheck {
                                     .toList();
 
                     return Optional.of(new HasJoinedResult(uuid, dto.name, props));
-                })
-                .exceptionally(ex -> {
-                    if (cn.alini.trueuuid.config.TrueuuidConfig.debug()) {
-                        System.out.println("[TrueUUID][DEBUG] 与会话服务通信或解析时发生异常: " + ex);
-                    }
-                    return Optional.empty();
                 });
     }
 
@@ -124,9 +112,7 @@ public final class SessionCheck {
 
     public static CompletableFuture<Optional<HasJoinedResult>> lookupMojangProfileAsync(String username) {
         String nameUrl = MOJANG_PROFILE_BY_NAME + URLEncoder.encode(username, StandardCharsets.UTF_8);
-        HttpRequest nameReq = HttpRequest.newBuilder(URI.create(nameUrl)).GET().build();
-
-        return HTTP.sendAsync(nameReq, HttpResponse.BodyHandlers.ofString())
+        return SessionHttpClient.get(URI.create(nameUrl))
                 .thenCompose(nameResp -> {
                     if (nameResp.statusCode() != 200) {
                         return CompletableFuture.completedFuture(Optional.<HasJoinedResult>empty());
@@ -138,8 +124,7 @@ public final class SessionCheck {
                     }
 
                     String textureUrl = MOJANG_PROFILE_BY_UUID + profile.id + "?unsigned=false";
-                    HttpRequest textureReq = HttpRequest.newBuilder(URI.create(textureUrl)).GET().build();
-                    return HTTP.sendAsync(textureReq, HttpResponse.BodyHandlers.ofString())
+                    return SessionHttpClient.get(URI.create(textureUrl))
                             .thenApply(textureResp -> {
                                 if (textureResp.statusCode() != 200) {
                                     return Optional.<HasJoinedResult>empty();
@@ -157,8 +142,7 @@ public final class SessionCheck {
                                                 .toList();
                                 return Optional.of(new HasJoinedResult(uuid, dto.name, props));
                             });
-                })
-                .exceptionally(ex -> Optional.empty());
+                });
     }
 
     // 保留同步方法（若需要）或移除 (Keep synchronous method (if needed) or remove)

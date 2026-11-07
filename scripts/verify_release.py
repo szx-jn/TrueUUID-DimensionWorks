@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the 1.0.9 auth source boundary and the reobfuscated Forge release jar."""
+"""Verify the 1.0.9 protocol/identity boundary and the reobfuscated Forge release jar."""
 import argparse
 import json
 import os
@@ -14,7 +14,6 @@ BASE = '9c4479a758a3347732a1172c52b4edae8be9b336'
 UNCHANGED_AUTH = [
     'src/main/java/cn/alini/trueuuid/mixin/client/ClientHandshakeMixin.java',
     'src/main/java/cn/alini/trueuuid/net/NetIds.java',
-    'src/main/java/cn/alini/trueuuid/server/SessionCheck.java',
     'src/main/java/cn/alini/trueuuid/server/AuthDecider.java',
     'src/main/java/cn/alini/trueuuid/server/AuthState.java',
     'src/main/java/cn/alini/trueuuid/server/NameRegistry.java',
@@ -38,7 +37,7 @@ def main():
         assert (ROOT / relative).read_bytes() == baseline, '1.0.9 auth/wire code changed: ' + relative
     assert 'distributionUrl=https\\://services.gradle.org/distributions/gradle-8.8-bin.zip' in (ROOT / 'gradle/wrapper/gradle-wrapper.properties').read_text()
     if args.source_only:
-        print('PASS: Forge/Java baseline and unchanged 1.0.9 client/session protocol')
+        print('PASS: Forge/Java baseline and unchanged 1.0.9 client wire protocol and identity storage')
         return
     jar = ROOT / 'build/libs' / f'trueuuid-{version}-forge1.20.1.jar'
     with zipfile.ZipFile(jar) as archive:
@@ -53,7 +52,7 @@ def main():
         for method in ['handleHello', 'handleCustomQueryPacket', 'tick']:
             assert any((key == method or key.startswith(method + '(')) and 'm_' in value
                        for key, value in mappings.items()), 'Missing SRG mapping: ' + method
-        for name in ['MigrationFiles', 'MigrationTransaction', 'FtbMigrationCaches', 'MigrationRecovery']:
+        for name in ['MigrationFiles', 'MigrationTransaction', 'FtbMigrationCaches', 'MigrationRecovery', 'SessionHttpClient']:
             assert 'cn/alini/trueuuid/server/' + name + '.class' in names
         for name in names:
             if name.endswith('.class'):

@@ -295,10 +295,13 @@ public abstract class ServerLoginMixin {
                             if (this.trueuuid$txId != expectedTransaction || !this.connection.isConnected()) return;
                             try {
                                 if (throwable != null) {
-                                    if (TrueuuidConfig.debug()) {
-                                        System.out.println("[TrueUUID] 认证异步回调发生异常: " + throwable);
+                                    Throwable cause = throwable;
+                                    while (cause instanceof java.util.concurrent.CompletionException && cause.getCause() != null) {
+                                        cause = cause.getCause();
                                     }
-                                    handleAuthFailure(ip, "服务器异常", false);
+                                    System.out.println("[TrueUUID] 认证服务请求失败: " + cause);
+                                    handleAuthFailure(ip, cause instanceof java.io.IOException
+                                            ? "认证服务连接失败" : "认证服务响应异常", false);
                                     return;
                                 }
 
@@ -402,8 +405,12 @@ public abstract class ServerLoginMixin {
                 AuthState.markOfflineFallback(this.connection, AuthState.FallbackReason.FAILURE);
             }
             case DENY -> {
-                String msg = d.denyMessage != null ? d.denyMessage
-                        : "鉴权失败，已禁止离线进入以保护你的正版存档。请稍后重试。";
+                String msg = switch (why) {
+                    case "认证服务连接失败" -> "服务器暂时无法连接账号认证服务，请稍后重试。";
+                    case "认证服务响应异常" -> "账号认证服务返回了异常响应，请稍后重试。";
+                    default -> d.denyMessage != null ? d.denyMessage
+                            : "鉴权失败，已禁止离线进入以保护你的正版存档。请稍后重试。";
+                };
                 System.out.println("[TrueUUID] 认证被拒绝, 玩家: " + name + ", ip: " + ip + ", 原因: " + why + ", 消息: " + msg);
                 if (TrueuuidConfig.debug()) {
                     System.out.println("[TrueUUID] 认证被拒绝, 玩家: " + name + ", ip: " + ip + ", 消息: " + msg);

@@ -6,22 +6,24 @@ on:
       release_version:
         description: "必须与 gradle.properties 中的固定版本一致"
         required: true
-        default: "1.0.9-dimensionworks.1"
+        default: "1.0.9-dimensionworks.2"
         type: string
       release_features:
         description: "新增功能；每行一条 feat(scope): 描述"
         required: false
-        default: "feat(auth): 真实会话认证成功后自动备份并继承同名离线玩家数据"
+        default: ""
         type: string
       release_fixes:
         description: "问题修复；每行一条 fix(scope): 描述"
         required: false
-        default: "fix(migration): 归档重复旧 UUID 数据并保护已有目标进度"
+        default: |-
+          fix(auth): 模组内自动使用 TLS 1.2、连接超时和一次连接重试，无需面板 JVM 参数
+          fix(auth): 区分认证服务连接异常与无效会话，保留正版 UUID 保护
         type: string
       release_other:
         description: "其他变更；每行一条 docs(scope): 描述"
         required: false
-        default: "docs(auth): 基于 1.0.9 保留原认证协议和 MSL 配置并说明恢复方法"
+        default: "docs(auth): 说明自动生效的鉴权连接策略与验证边界"
         type: string
 
 permissions:

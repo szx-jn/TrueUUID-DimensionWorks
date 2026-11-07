@@ -1,7 +1,7 @@
 # TrueUUID — DimensionWorks 1.0.9 自动继承版
 
 本 fork 基于社区版 1.0.9，仅发布 Forge 1.20.1 / Java 17 的
-1.0.9-dimensionworks.1，保留原认证协议与旧 MSL 白名单配置。
+1.0.9-dimensionworks.2，保留原认证协议与旧 MSL 白名单配置。
 认证成功后默认自动备份、继承并归档同名离线数据；不同的已有目标
 进度会阻止自动继承，双方数据均保留。
 
@@ -11,8 +11,11 @@
 - 保留目标：/trueuuid cleanupuuid <name>，只有每份旧数据都有目标副本才允许归档。
 - 命令运行时新旧账号都必须离线；完整冷备份仍是升级前的必要准备。
 - 正式产物由本 fork 的 GitHub Actions 构建发布；不使用上游 1.3.x 客户端。
+- 鉴权连接自动使用 TLS 1.2，连接超时 5 秒、单次请求超时 8 秒；连接中断只重试一次。
+- 网络错误保留原因并显示认证服务连接失败；HTTP 204 等无效会话不重试、不按网络错误处理。
+- 连接策略只作用于本模组，不需要面板额外填写 IPv4 或 authlib-injector 排除参数；证书与主机名校验保持开启。
 
-实现边界、备份恢复和实际验证记录见 [自动继承说明](docs/automatic-offline-migration.md)。
+实现边界、备份恢复和实际验证记录见 [自动继承说明](docs/automatic-offline-migration.md) 与 [鉴权连接说明](docs/authentication-network.md)。
 保留上游 GNU LGPL 3.0 许可、作者与社区贡献署名。
 
 下面保留上游 1.0.9 的功能说明，其中迁移确认说明适用于关闭自动继承；
