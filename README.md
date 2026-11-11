@@ -20,7 +20,7 @@ online-mode=false
 - Signed skin texture injection during login.
 - Player info refresh after joining, helping skins update correctly.
 - Clear join feedback for premium, skin-site, and offline fallback states.
-- Offline-to-verified player data migration with confirmation and backups.
+- Automatic same-name offline player data inheritance after successful Mojang or Yggdrasil/MSL authentication, with backups.
 - Protection against known verified players rejoining with the same name in offline mode.
 
 ## Why
@@ -53,9 +53,12 @@ This is useful for modpacks, LAN-style servers, private offline-mode communities
 
 TrueUUID 1.0.9 adds a safer migration flow for players who used to play offline and later switch to a premium or skin-site account with the same name.
 
-When a verified login detects matching offline UUID data, the player will see a confirmation screen. Migration only happens after confirmation.
+When authentication succeeds and matching offline UUID data is found, the server automatically inherits it before loading the new UUID's player data. No player confirmation is required. Before migration, TrueUUID backs up both the old offline data and any existing target verified UUID data.
 
-Before migration, TrueUUID backs up both the old offline data and any existing target verified UUID data.
+Two authentication paths are supported:
+
+- TrueUUID offline-mode handshake: the client completes `joinServer`, then the server independently verifies the session with `hasJoined`. Migration runs only after verification succeeds.
+- MSL Skin unified authentication: configure MSL's authlib-injector server integration with the original `online-mode=true` setting. TrueUUID does not intercept this native login path; it performs inheritance after Yggdrasil authentication succeeds and before player data is loaded.
 
 Supported migration targets include:
 
