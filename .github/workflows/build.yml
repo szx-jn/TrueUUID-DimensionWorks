@@ -7,7 +7,7 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -30,3 +30,13 @@ jobs:
           name: trueuuid-forge-1.20.1
           path: build/libs/*.jar
           if-no-files-found: error
+      - name: Publish GitHub release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/rebuild/trueuuid-1.0.9-clean'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create v1.0.10 build/libs/trueuuid-1.0.10-forge1.20.1.jar \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "TrueUUID 1.0.10 — Forge 1.20.1" \
+            --notes "Based on upstream TrueUUID 1.0.9. Adds automatic migration of same-name offline player data after successful authenticated login for Mojang and MSL/Yggdrasil paths."
