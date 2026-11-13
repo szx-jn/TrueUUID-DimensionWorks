@@ -75,6 +75,10 @@ Supported migration targets include:
 - FTB Ranks
 - CustomNPCs playerdata
 
+## Client authentication failures
+
+Failed client `joinServer` calls record the account name, UUID, authentication source, exception type, and error detail in `logs/latest.log`, with the access token redacted. The server continues applying its configured failure and fallback policy. When it denies the login, the client shows the original invalid-session, authentication-service-unavailable, or detailed authentication error. Disconnects without a client authentication failure keep the server's original reason.
+
 ## Requirements
 
 Forge build:

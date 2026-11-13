@@ -1,6 +1,10 @@
 package cn.alini.trueuuid.mixin.client;
 
 import cn.alini.trueuuid.net.NetIds;
+import com.mojang.authlib.exceptions.AuthenticationException;
+import com.mojang.authlib.exceptions.AuthenticationUnavailableException;
+import com.mojang.authlib.exceptions.InvalidCredentialsException;
+import com.mojang.logging.LogUtils;
 import io.netty.buffer.Unpooled;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.User; // official 映射 (mapping)
@@ -15,6 +19,7 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.lang.reflect.Field;
@@ -22,11 +27,16 @@ import java.lang.management.ManagementFactory;
 import java.net.URL;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
+import org.slf4j.Logger;
 
 @Mixin(ClientHandshakePacketListenerImpl.class)
 public abstract class ClientHandshakeMixin {
+    @Unique private static final Logger trueuuid$LOGGER = LogUtils.getLogger();
+    @Unique private volatile Component trueuuid$authFailureReason;
     @Shadow private Connection connection;
     @Shadow private Consumer<Component> updateStatus;
 
@@ -72,18 +82,44 @@ public abstract class ClientHandshakeMixin {
                         // 令牌只在本地使用 (Token is only used locally)
                         mc.getMinecraftSessionService().joinServer(profile, token, serverId);
                         return true;
-                    } catch (Throwable t) {
-                        return false;
+                    } catch (AuthenticationException failure) {
+                        throw new CompletionException(failure);
                     }
                 })
                 .orTimeout(30, TimeUnit.SECONDS)
-                .exceptionally(t -> false)
-                .thenAccept(ok -> {
+                .whenComplete((ok, failure) -> {
+                    if (failure != null) {
+                        Throwable reason = failure instanceof CompletionException && failure.getCause() != null
+                                ? failure.getCause() : failure;
+                        String detail = reason.getMessage() == null ? reason.getClass().getSimpleName()
+                                : reason.getMessage().replace(token, "<redacted>");
+                        trueuuid$LOGGER.warn("[TrueUUID] 客户端 joinServer 失败: player={}, uuid={}, source={}, {}: {}",
+                                profile.getName(), profile.getId(), hasJoinedUrl.isEmpty() ? "Mojang" : "Yggdrasil",
+                                reason.getClass().getSimpleName(), detail);
+                        if (reason.getCause() != null) {
+                            trueuuid$LOGGER.warn("[TrueUUID] 底层认证异常: {}", reason.getCause().getClass().getSimpleName());
+                        }
+                        if (reason instanceof InvalidCredentialsException) {
+                            this.trueuuid$authFailureReason = Component.translatable("disconnect.loginFailedInfo.invalidSession");
+                        } else if (reason instanceof AuthenticationUnavailableException || reason instanceof TimeoutException) {
+                            this.trueuuid$authFailureReason = Component.translatable("disconnect.loginFailedInfo.serversUnavailable");
+                        } else {
+                            this.trueuuid$authFailureReason = Component.translatable("disconnect.loginFailedInfo", detail);
+                        }
+                        // 仍由服务器按既有策略决定拒绝或离线兜底；拒绝时客户端显示真正的认证失败原因。
+                        trueuuid$sendAuthAck(loginConnection, transactionId, false, hasJoinedUrl, false, false);
+                        return;
+                    }
                     // 只有客户端 joinServer 成功后才确认自动继承；服务端还会独立执行 hasJoined 验证。
                     trueuuid$sendAuthAck(loginConnection, transactionId, ok, hasJoinedUrl, ok && upgradeAvailable, false);
                 });
 
         ci.cancel();
+    }
+
+    @ModifyVariable(method = "onDisconnect", at = @At("HEAD"), argsOnly = true)
+    private Component trueuuid$showAuthenticationFailure(Component serverReason) {
+        return this.trueuuid$authFailureReason != null ? this.trueuuid$authFailureReason : serverReason;
     }
 
     @Unique
